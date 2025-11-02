@@ -72,11 +72,13 @@ function onPageMessage(e) {
     });
 
     // Send complete context for GitHub storage
-    safeSend({ 
-      type: "submission", 
+    safeSend({
+      type: "submission",
+      title,
+      lang,
       code,
       problemContext, // Full problem details including tags
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
   }
 }

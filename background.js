@@ -71,12 +71,14 @@ function toBase64(str) {
   return btoa(binary);
 }
 
-function ghHeaders(token) {
+function ghHeaders(token, extra = {}) {
+  if (!token) throw new Error("GitHub token missing");
   return {
     Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
     "Content-Type": "application/json",
+    ...extra,
   };
 }
 
@@ -292,15 +294,6 @@ async function idbGetAll(store) {
 }
 
 // ---------- GitHub helpers ----------
-function ghHeaders(token, extra = {}) {
-  return Object.assign(
-    {
-      Authorization: `token ${token}`,
-      Accept: "application/vnd.github+json",
-    },
-    extra
-  );
-}
 
 async function getDefaultBranch(owner, repo, token) {
   const url = `https://api.github.com/repos/${owner}/${repo}`;
@@ -313,6 +306,14 @@ async function getDefaultBranch(owner, repo, token) {
 // This version uses the GitHub Contents API (recursive) and works with private repos
 // having "Repository contents: Read" permission on your token.
 
+function encodePath(path) {
+  if (!path) return "";
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
 async function getTreeEntries(owner, repo, branch, token) {
   const headers = typeof ghHeaders === "function"
     ? ghHeaders(token)
@@ -321,7 +322,7 @@ async function getTreeEntries(owner, repo, branch, token) {
   // BFS over directories via Contents API (works with private repos)
   async function listDir(path) {
     const base = `https://api.github.com/repos/${owner}/${repo}/contents`;
-    const url = `${base}/${path ? encodeURIComponent(path) : ""}?ref=${encodeURIComponent(branch)}`;
+    const url = `${base}/${path ? encodePath(path) : ""}?ref=${encodeURIComponent(branch)}`;
     const res = await fetch(url, { headers });
     if (!res.ok) {
       throw new Error(`Contents list failed (${path || "/"}) : ${res.status}`);
@@ -377,7 +378,7 @@ async function fetchBlobContent(owner, repo, id, token, branchOpt) {
     return atob(j.content.replace(/\n/g, ""));
   } else {
     // Contents API by path (base64)
-    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(id)}${branchOpt ? `?ref=${encodeURIComponent(branchOpt)}` : ""}`;
+    const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodePath(id)}${branchOpt ? `?ref=${encodeURIComponent(branchOpt)}` : ""}`;
     const res = await fetch(url, { headers });
     if (!res.ok) throw new Error(`Contents fetch failed: ${res.status}`);
     const j = await res.json();
@@ -683,6 +684,81 @@ function buildStyleProfile(docs) {
   return { key: "style", style: { indent, brace, naming, comment } };
 }
 
+function analyzeDocStructure(doc) {
+  if (!doc?.code) return {};
+  const code = doc.code;
+  const lines = code.split(/\r?\n/);
+  let functionCount = 0;
+  let usesStepComments = false;
+  let usesInlineComments = false;
+  let usesBlockComments = false;
+  let classSolution = /class\s+Solution/.test(code);
+
+  const fnPatterns = [
+    /^\s*(?:static\s+)?(?:inline\s+)?(?:public\s+|private\s+|protected\s+)?[a-zA-Z_][\w:<>\[\]]*\s+[a-zA-Z_][\w]*\s*\([^;]*\)\s*\{/,
+    /^\s*(?:const\s+)?(?:auto\s+)?[a-zA-Z_][\w]*\s*\([^;{]*\)\s*=>/,
+    /^\s*function\s+[a-zA-Z_]\w*\s*\(/,
+    /^\s*def\s+[a-zA-Z_]\w*\s*\(/,
+  ];
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/\/\/|#(?!include)/.test(line)) usesInlineComments = true;
+    if (/\/\*/.test(line)) usesBlockComments = true;
+    if (/step\s*\d+/i.test(line) || /phase\s*\d+/i.test(line) || /^#?\s*step\s*:?/i.test(line)) usesStepComments = true;
+    const isFunction = fnPatterns.some((re) => re.test(line));
+    if (isFunction) functionCount++;
+  }
+
+  return {
+    functionCount,
+    usesStepComments,
+    usesInlineComments,
+    usesBlockComments,
+    classSolution,
+  };
+}
+
+function buildStyleHints(examples, fallbackStyle) {
+  let style = {
+    indent: 2,
+    brace: "kr",
+    naming: "camel",
+    comment: "line",
+    ...(fallbackStyle || {}),
+  };
+  const cues = [];
+
+  if (examples?.length) {
+    try {
+      const derived = buildStyleProfile([examples[0]]);
+      if (derived?.style) {
+        style = { ...style, ...derived.style };
+      }
+    } catch (e) {
+      console.warn("[GitCode][Style] Unable to derive style from example:", e);
+    }
+
+    const structure = analyzeDocStructure(examples[0]);
+    if (structure.classSolution) {
+      cues.push("Wrap the solver inside your usual `class Solution` shell.");
+    }
+    if (structure.functionCount > 1) {
+      cues.push("Separate reusable logic into helper functions just like the reference submission.");
+    }
+    if (structure.usesStepComments) {
+      cues.push("Annotate major phases with step-style comments (e.g., `// Step 1:`).");
+    } else if (structure.usesInlineComments && !structure.usesBlockComments) {
+      cues.push("Use short inline comments to explain tricky branches.");
+    } else if (structure.usesBlockComments && !structure.usesInlineComments) {
+      cues.push("Prefer block comments for multi-line explanations.");
+    }
+  }
+
+  return { style, cues };
+}
+
 // ---------- Synthesis ----------
 function synthSkeleton(mode, ctx, style, refs) {
   const indent = " ".repeat(style?.indent || 2);
@@ -751,25 +827,85 @@ ${todo("Return/print output")}
 }
 
 async function handleRagQuery(ctx, mode) {
-  // Validate input context
-  if (!ctx?.data?.context) {
-    throw new Error('Invalid or missing context in RAG query');
+  if (!ctx?.data) {
+    throw new Error("Invalid RAG query payload");
   }
 
-  const context = ctx.data.context;
-  
-  // Early validation of critical fields
-  if (!context.title || !context.description) {
-    throw new Error('Missing required problem details (title/description)');
+  const rawContext = ctx.data.context || {};
+  const problem = ctx.data.problem || {};
+  const preferences = ctx.data.preferences || {};
+
+  const context = {
+    ...rawContext,
+  };
+
+  if (!context.title) {
+    context.title =
+      problem.name ||
+      problem.slug?.replace(/[-_]+/g, " ") ||
+      rawContext.problemSlug ||
+      "Unknown Problem";
+  }
+
+  if (!context.problemSlug) {
+    context.problemSlug =
+      problem.slug ||
+      (context.title
+        ? context.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+        : undefined);
+  }
+
+  if (!context.description || context.description === "...") {
+    context.description = problem.description || "";
+  }
+
+  if (!context.difficulty || context.difficulty === "unknown") {
+    context.difficulty = problem.difficulty || "unknown";
+  }
+
+  if (!Array.isArray(context.constraints) || !context.constraints.length) {
+    const problemConstraints = Array.isArray(problem.constraints) ? problem.constraints : [];
+    context.constraints = problemConstraints.length ? problemConstraints : [];
+  }
+  context.constraints = Array.isArray(context.constraints)
+    ? context.constraints.map((c) => String(c).trim()).filter(Boolean)
+    : [];
+
+  const prefTags = Array.isArray(preferences.tags)
+    ? preferences.tags.filter(Boolean)
+    : [];
+  if (!Array.isArray(context.tags) || !context.tags.length) {
+    context.tags = prefTags;
+  }
+  if (!Array.isArray(context.tags)) {
+    context.tags = [context.tags].filter(Boolean);
+  }
+  context.tags = Array.from(new Set(context.tags.map((t) => String(t).trim()).filter(Boolean)));
+
+  context.lang =
+    (context.lang || preferences.language || "").trim().toLowerCase();
+
+  context.title = (context.title || "").trim();
+  context.description = (context.description || "").trim();
+
+  if (!context.description) {
+    context.description =
+      "Problem description unavailable. Try reloading the problem page, then click the button again.";
+  }
+
+  if (!context.title) {
+    throw new Error("Problem title missing from extracted context.");
   }
 
   if (!context.lang) {
-    throw new Error('Programming language not specified or detected');
+    throw new Error(
+      "Programming language not detected. Select a language in the editor and retry."
+    );
   }
 
   // Get style preferences
   const styleMeta = await idbGet(GC_STORE_META, "style");
-  const style = styleMeta?.style || { 
+  let style = styleMeta?.style || { 
     indent: 2, 
     brace: "kr", 
     naming: "camel", 
@@ -780,22 +916,36 @@ async function handleRagQuery(ctx, mode) {
   const searchTerms = [
     context.title,
     context.problemSlug,
-    ...context.constraints || [],
+    ...(context.constraints || []),
     ...(context.tags || []),
     context.difficulty
   ].filter(Boolean);
 
   // Improved BM25 search with language preference
   const hits = await bm25Query(searchTerms.join(" "), context.lang);
+  console.warn("[GitCode][RAG] query", {
+    terms: searchTerms,
+    lang: context.lang,
+    hitCount: hits.length,
+    sample: hits.slice(0, 3).map((h) => ({
+      path: h.doc?.path,
+      lang: h.doc?.lang,
+      score: Number(h.score?.toFixed?.(3) ?? h.score),
+    })),
+  });
   
   // Get example solutions for reference
   const examples = await Promise.all(
     hits.slice(0, 3).map(async h => ({
       title: h.doc.title,
       lang: h.doc.lang,
+      path: h.doc.path,
       code: h.doc.code
     }))
   );
+
+  const { style: repoStyle, cues: repoCues } = buildStyleHints(examples, style);
+  style = repoStyle;
 
   // Build enhanced prompt for GPT-4
   const prompt = [
@@ -809,6 +959,8 @@ Style preferences to follow:
 - Bracing style: ${style.brace === 'kr' ? 'K&R (brace on same line)' : 'Allman (brace on new line)'}
 - Naming: ${style.naming === 'camel' ? 'camelCase' : 'snake_case'}
 - Comments: ${style.comment === 'line' ? 'line comments (//)' : 'block comments (/* */)'}
+
+${repoCues.length ? `Repo-specific cues:\n${repoCues.map(c => `- ${c}`).join('\n')}\n` : ""}
 
 Key requirements:
 1. Clean, readable code following the style guide
@@ -832,8 +984,10 @@ ${mode === 'skeleton' ? 'Create a solution skeleton with TODOs and structure' :
   mode === 'hints' ? 'Provide a partially implemented solution with key hints' :
   'Implement a complete solution with full implementation'}
 
-${examples.length ? `\nReference solutions in similar style:
-${examples.map(ex => `\n=== ${ex.title} (${ex.lang}) ===\n${ex.code}`).join('\n')}` : ''}
+${examples.length ? `\nReference solutions in similar style (from your repository):
+${examples.map(ex => `\n=== ${ex.title} (${ex.lang}) — ${ex.path || 'path n/a'} ===\n${ex.code}`).join('\n')}` : ''}
+
+${examples.length ? `Study the references above and mirror their naming patterns, helper structure, and comment voice in your response.` : ''}
 
 Requirements:
 1. Follow the style guide exactly
@@ -841,6 +995,8 @@ Requirements:
 3. Mark key invariants and edge cases
 4. Use optimal data structures
 5. Provide time/space complexity
+6. Keep the structure (helpers, comment cadence, ordering) aligned with the reference solutions.
+7. If you intentionally diverge from the reference approach, note the reason in a short comment.
 `
     }
   ];
@@ -917,9 +1073,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           slug: msg.data?.problem?.slug || msg.data?.context?.problemSlug || msg.data?.context?.title?.toLowerCase().replace(/[^a-z0-9]+/g, '-') || ""
         };
 
-        // Validate extracted data
-        if (!problem.name || !problem.description) {
-          throw new Error('Missing required problem details');
+        // Validate extracted data (allow fallback for description)
+        if (!problem.name && !msg.data?.context?.title) {
+          throw new Error('Missing required problem title. Reload the page and try again.');
         }
 
         // Ensure we have an index
@@ -930,6 +1086,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             throw new Error("Solution index is empty. Click 'Sync now' in popup to index your solutions.");
           }
         }
+
+        console.log("[GitCode][RAG] normalized problem payload", {
+          name: problem.name,
+          descriptionPreview: problem.description?.slice(0, 80) || "(empty)",
+          difficulty: problem.difficulty,
+          slug: problem.slug,
+          langPref: msg.data?.preferences?.language,
+          contextTitle: msg.data?.context?.title,
+          contextDescriptionPreview: msg.data?.context?.description?.slice(0, 80) || "(empty)"
+        });
 
         // Process the query
         const res = await handleRagQuery(msg, msg.mode || "skeleton");
@@ -973,15 +1139,3 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   })();
   return true; // Keep the message channel open for async response
 });
-
-            // Process the query and send response
-      const res = await handleRagQuery(msg, msg.mode || "skeleton").catch((e) => ({
-        ok: false,
-        error: String(e)
-      }));
-      sendResponse(res);
-    }
-  })();
-  return true; // async
-});
-
