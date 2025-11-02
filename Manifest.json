@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "GitCode",
+  "version": "1.0",
+  "permissions": [
+    "storage",
+    "notifications",
+    "alarms",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://leetcode.com/*",
+    "https://api.github.com/*", 
+    "https://raw.githubusercontent.com/*",
+    "https://api.openai.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["https://leetcode.com/*"], "js": ["content.js"] }
+  ],
+  "action": { "default_popup": "popup.html" },
+  "web_accessible_resources": [
+    {
+      "resources": ["pageHook.js", "icon.png"],
+      "matches": ["https://leetcode.com/*"]
+    }
+  ],
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+}

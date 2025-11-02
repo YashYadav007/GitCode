@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head><title>LeetCode Auto Push</title></head>
+<body>
+  <h3>GitHub Settings</h3>
+  <label>Username: <input id="username"></label><br>
+  <label>Repo: <input id="repo"></label><br>
+  <label>Token: <input id="token" type="password"></label><br>
+  <label>Branch: <input id="branch" placeholder="main"></label><br>
+
+  <button id="save">Save</button>
+  <button id="testCredsBtn">Test Credentials</button>
+
+  <hr />
+  <h3>RAG / My-Style</h3>
+  <button id="gc-sync">Sync now</button>
+  <span id="gc-sync-status" style="font-size:12px;opacity:.8;margin-left:8px;"></span>
+
+  <hr />
+  <h3>OpenAI Settings</h3>
+  <label>API Key: <input id="openai_key" type="password"></label><br>
+  <button id="save-openai">Save API Key</button>
+
+  <p id="status"></p>
+  <script src="popup.js"></script>
+</body>
+</html>
