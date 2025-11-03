@@ -1,27 +1,45 @@
 <!DOCTYPE html>
-<html>
-<head><title>LeetCode Auto Push</title></head>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LeetCode Auto Push</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css" />
+</head>
 <body>
-  <h3>GitHub Settings</h3>
-  <label>Username: <input id="username"></label><br>
-  <label>Repo: <input id="repo"></label><br>
-  <label>Token: <input id="token" type="password"></label><br>
-  <label>Branch: <input id="branch" placeholder="main"></label><br>
+  <div class="container">
+    <h2 class="title">⚙️ LeetCode → GitHub Auto Push</h2>
 
-  <button id="save">Save</button>
-  <button id="testCredsBtn">Test Credentials</button>
+    <section>
+      <h3>GitHub Settings</h3>
+      <label>Username <input id="username" placeholder="your GitHub username"></label>
+      <label>Repo <input id="repo" placeholder="repo name"></label>
+      <label>Token <input id="token" type="password" placeholder="ghp_xxx"></label>
+      <label>Branch <input id="branch" placeholder="main"></label>
+      <div class="btn-row">
+        <button id="save">💾 Save</button>
+        <button id="testCredsBtn">🧪 Test</button>
+      </div>
+    </section>
 
-  <hr />
-  <h3>RAG / My-Style</h3>
-  <button id="gc-sync">Sync now</button>
-  <span id="gc-sync-status" style="font-size:12px;opacity:.8;margin-left:8px;"></span>
+    <section>
+      <h3>🧠 RAG / My-Style</h3>
+      <div class="btn-row">
+        <button id="gc-sync">🔄 Sync now</button>
+        <span id="gc-sync-status"></span>
+      </div>
+    </section>
 
-  <hr />
-  <h3>OpenAI Settings</h3>
-  <label>API Key: <input id="openai_key" type="password"></label><br>
-  <button id="save-openai">Save API Key</button>
+    <section>
+      <h3>🤖 OpenAI Settings</h3>
+      <label>API Key <input id="openai_key" type="password" placeholder="sk-..."></label>
+      <button id="save-openai">💾 Save API Key</button>
+    </section>
 
-  <p id="status"></p>
+    <p id="status"></p>
+  </div>
+
   <script src="popup.js"></script>
 </body>
 </html>

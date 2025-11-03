@@ -86,9 +86,6 @@ document.addEventListener("DOMContentLoaded", () => {
       setDisabled(false);
     }
   });
-});
-
-
   // === GitCode RAG: manual sync trigger ===
   (() => {
     const syncBtn = document.getElementById("gc-sync");
@@ -115,12 +112,12 @@ document.addEventListener("DOMContentLoaded", () => {
     // Load saved key
     chrome.storage.local.get(['openai_key'], (d) => {
       if (d.openai_key) {
-        document.getElementById('openai_key').value = d.openai_key;
+        openaiKeyEl.value = d.openai_key;
       }
     });
 
     saveOpenAIBtn.addEventListener('click', () => {
-      const key = document.getElementById('openai_key').value.trim();
+      const key = openaiKeyEl.value.trim();
       if (!key) {
         setStatus('⚠️ Please enter OpenAI API key', 'red');
         return;
@@ -132,3 +129,4 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
   })();
+});
