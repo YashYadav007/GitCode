@@ -1,132 +1,58 @@
-// =======================
-// popup.js (final)
-// =======================
+document.addEventListener('DOMContentLoaded', () => {
+  // Existing popup initialization lives here.
+});
 
-document.addEventListener("DOMContentLoaded", () => {
-  const usernameEl = document.getElementById("username");
-  const repoEl = document.getElementById("repo");
-  const tokenEl = document.getElementById("token");
-  const branchEl = document.getElementById("branch");
-  const openaiKeyEl = document.getElementById("openai_key");
-  const statusEl = document.getElementById("status");
-  const saveBtn = document.getElementById("save");
-  const testBtn = document.getElementById("testCredsBtn");
 
-  const setStatus = (msg, color = "inherit") => {
-    statusEl.textContent = msg;
-    statusEl.style.color = color;
-  };
+// DevContext GitHub token safety guard
+(function installDevContextGitHubTokenGuard() {
+  const WARNING_ID = "devcontext-github-token-warning";
+  const TOKEN_KEYS = ["githubToken", "github_token", "GITHUB_TOKEN", "token"];
+  const WARNING_TEXT = "GitHub token is not configured. Add it in settings before using GitHub features.";
 
-  const setDisabled = (flag) => {
-    saveBtn.disabled = flag;
-    if (testBtn) testBtn.disabled = flag;
-    usernameEl.disabled = flag;
-    repoEl.disabled = flag;
-    tokenEl.disabled = flag;
-    if (branchEl) branchEl.disabled = flag;
-  };
-
-  // 1) Load saved values
-  chrome.storage.local.get(["username", "repo", "token", "branch"], (d) => {
-    // populate if present
-    if (d.username) usernameEl.value = d.username;
-    if (d.repo) repoEl.value = d.repo;
-    if (d.token) tokenEl.value = d.token;
-    branchEl.value = (d.branch || "main");
-  });
-
-  // 2) Save values
-  saveBtn.addEventListener("click", () => {
-    const username = (usernameEl.value || "").trim();
-    const repo = (repoEl.value || "").trim();
-    const token = (tokenEl.value || "").trim();
-    const branch = (branchEl.value || "main").trim() || "main";
-
-    if (!username || !repo || !token) {
-      setStatus("⚠️ Please fill username, repo, and token.", "red");
-      return;
-    }
-
-    setDisabled(true);
-    setStatus("💾 Saving...", "black");
-    chrome.storage.local.set({ username, repo, token, branch }, () => {
-      if (chrome.runtime.lastError) {
-        setStatus("❌ Save failed: " + chrome.runtime.lastError.message, "red");
-      } else {
-        setStatus("✅ Saved!", "green");
-        setTimeout(() => setStatus(""), 1500);
-      }
-      setDisabled(false);
-    });
-  });
-
-  // 3) Test credentials
-  testBtn.addEventListener("click", () => {
-    setDisabled(true);
-    setStatus("⏳ Testing…", "black");
-
-    try {
-      chrome.runtime.sendMessage({ type: "testCreds" }, (resp) => {
-        if (chrome.runtime.lastError) {
-          setStatus("⚠️ " + chrome.runtime.lastError.message, "red");
-          setDisabled(false);
-          return;
-        }
-        if (resp?.ok) {
-          setStatus("✅ Credentials OK.", "green");
-        } else {
-          const code = resp?.status ? ` (${resp.status})` : "";
-          const msg = (resp?.message || resp?.error || "Unknown error").slice(0, 200);
-          setStatus("❌ Test failed" + code + ": " + msg, "red");
-        }
-        setDisabled(false);
-      });
-    } catch (e) {
-      setStatus("❌ Test threw: " + String(e), "red");
-      setDisabled(false);
-    }
-  });
-  // === GitCode RAG: manual sync trigger ===
-  (() => {
-    const syncBtn = document.getElementById("gc-sync");
-    const syncStatus = document.getElementById("gc-sync-status");
-    if (!syncBtn) return;
-
-    syncBtn.addEventListener("click", async () => {
-      syncStatus.textContent = "Syncing…";
-      try {
-        const res = await chrome.runtime.sendMessage({ type: "gc_sync_repo" });
-        syncStatus.textContent = res?.ok ? `Synced ${res.count||0} files` : (res?.error || "Failed");
-      } catch (e) {
-        syncStatus.textContent = "Failed to trigger sync";
-      }
-      setTimeout(()=> syncStatus.textContent="", 4000);
-    });
-  })();
-
-  // === OpenAI key handler ===
-  (() => {
-    const saveOpenAIBtn = document.getElementById("save-openai");
-    if (!saveOpenAIBtn) return;
-
-    // Load saved key
-    chrome.storage.local.get(['openai_key'], (d) => {
-      if (d.openai_key) {
-        openaiKeyEl.value = d.openai_key;
-      }
-    });
-
-    saveOpenAIBtn.addEventListener('click', () => {
-      const key = openaiKeyEl.value.trim();
-      if (!key) {
-        setStatus('⚠️ Please enter OpenAI API key', 'red');
+  function readStoredToken() {
+    return new Promise((resolve) => {
+      if (!globalThis.chrome?.storage?.local) {
+        resolve("");
         return;
       }
-      
-      chrome.storage.local.set({ openai_key: key }, () => {
-        setStatus('✅ OpenAI key saved!', 'green');
-        setTimeout(() => setStatus(''), 1500);
+      chrome.storage.local.get(TOKEN_KEYS, (values) => {
+        const token = TOKEN_KEYS.map((key) => values?.[key]).find((value) => typeof value === "string" && value.trim().length > 0);
+        resolve(token || "");
       });
     });
-  })();
-});
+  }
+
+  function showGitHubTokenWarning() {
+    let warning = document.getElementById(WARNING_ID);
+    if (!warning) {
+      warning = document.createElement("div");
+      warning.id = WARNING_ID;
+      warning.className = "devcontext-token-warning";
+      warning.setAttribute("role", "alert");
+      document.body.prepend(warning);
+    }
+    warning.textContent = WARNING_TEXT;
+  }
+
+  async function hasGitHubToken() {
+    const token = await readStoredToken();
+    return Boolean(token);
+  }
+
+  document.addEventListener(
+    "click",
+    async (event) => {
+      const target = event.target instanceof Element ? event.target.closest("button, a, [data-github-action]") : null;
+      if (!target) return;
+      const actionText = [target.textContent || "", target.getAttribute("id") || "", target.getAttribute("class") || "", target.getAttribute("data-github-action") || ""].join(" ");
+      if (!/github|repository|repo|pull request|issue/i.test(actionText)) return;
+      if (await hasGitHubToken()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      showGitHubTokenWarning();
+    },
+    true,
+  );
+
+  window.devcontextGitHubTokenGuard = { hasGitHubToken, showGitHubTokenWarning };
+})();
